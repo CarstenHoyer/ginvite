@@ -1,0 +1,121 @@
+<?php
+
+/**
+ * @file
+ * Contains ginvite.module.
+ */
+
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Url;
+use Drupal\ginvite\Plugin\GroupContentEnabler\GroupInvitation;
+use Drupal\group\Entity\GroupContentInterface;
+use Drupal\user\UserInterface;
+
+/**
+ * Alter group_invitation Group content fields.
+ *
+ * Implements hook_entity_bundle_field_info_alter().
+ */
+function ginvite_entity_bundle_field_info_alter(&$fields, EntityTypeInterface $entity_type, $bundle) {
+  if ($entity_type->id() == 'group_content'
+    && strpos($bundle, 'group_invitation') !== FALSE) {
+    // Reference to Anonymous user by default.
+    $fields['entity_id']->setDefaultValue(0);
+  }
+}
+
+/**
+ * Sends email when invitation created for not registered user.
+ *
+ * Implements hook_ENTITY_TYPE_insert().
+ */
+function ginvite_group_content_insert(GroupContentInterface $group_content) {
+  if ($group_content->getContentPlugin()->getPluginId() != 'group_invitation') {
+    return;
+  }
+
+  $mail = $group_content->get('invitee_mail')->getString();
+
+  if ($invitee = user_load_by_mail($mail)) {
+    $group_content->set('entity_id', $invitee);
+    drupal_set_message(t('Invitation has been created.'));
+  }
+  else {
+    $mailManager = \Drupal::service('plugin.manager.mail');
+    $from = $group_content->get('uid')->first()->get('entity')->getTarget()->getValue();
+    $group = $group_content->get('gid')->first()->get('entity')->getTarget()->getValue();
+    $params = ['user' => $from, 'group' => $group];
+    $langcode = $from->getPreferredLangcode();
+
+    $mailManager->mail('ginvite', 'invite', $mail, $langcode, $params, NULL, TRUE);
+
+    drupal_set_message(t('Invite sent to %mail', array('%mail' => $mail)));
+  }
+
+  $group_content->set('invitation_status', GroupInvitation::INVITATION_PENDING);
+  $group_content->save();
+}
+
+/**
+ * Implements hook_mail().
+ *
+ * This mail is sent when people who do not have an account on the website yet
+ * are invited into a group. It is sent in the language the inviter was using
+ * the website in.
+ *
+ * @see ginvite_group_content_insert()
+ */
+function ginvite_mail($key, &$message, $params) {
+  if ($key == 'invite') {
+    $options = array(
+      'langcode' => $message['language']->language,
+    );
+
+    $body_message = 'Hi there!' . "\n\n";
+    $body_message .= '@user has invited you to become a member of the group "@group" on @site.' . "\n";
+    $body_message .= 'If you wish to accept the invitation, you need to create an account first.' . "\n\n";
+    $body_message .= 'Please visit the following address in order to do so: @url' . "\n";
+    $body_message .= 'Make sure you register your account with this e-mail address!' . "\n\n";
+    $body_message .= 'Kind regards,' . "\n";
+    $body_message .= 'The @site team';
+    $body_replace = array(
+      '@user' => $params['user']->getDisplayName(),
+      '@group' => $params['group']->label(),
+      '@site' => \Drupal::config('system.site')->get('name'),
+      '@url' => Url::fromRoute('user.register', [], ['absolute' => TRUE])->toString(),
+    );
+
+    $message['subject'] = t('You have a pending group invitation', [], $options);
+    $message['body'][] = t($body_message, $body_replace, $options);
+  }
+}
+
+/**
+ * Set referenced entity to Invitation when invited user registered.
+ *
+ * Implements hook_ENTITY_TYPE_insert().
+ */
+function ginvite_user_insert(UserInterface $user) {
+  $properties = [
+    'invitee_mail' => $user->getEmail(),
+    'invitation_status' => GroupInvitation::INVITATION_PENDING,
+  ];
+
+  $invitations = \Drupal::service('ginvite.inviation_loader')->loadByProperties($properties);
+
+  foreach ($invitations as $invitation) {
+    $group_content = $invitation->getGroupContent();
+    $group_content->set('entity_id', $user);
+    $group_content->save();
+  }
+}
+
+/**
+ * Add Constraint to prevent duplicated invitations.
+ *
+ * Implements hook_entity_type_alter().
+ */
+function ginvite_entity_type_alter(array &$entity_types) {
+  $group_content = $entity_types['group_content'];
+  $group_content->addConstraint('PreventDuplicated', []);
+}

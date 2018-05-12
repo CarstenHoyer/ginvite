@@ -1,0 +1,11 @@
+ginvite.invitation.actions:
+  path: '/ginvite/{group_content}/{op}'
+  defaults:
+    _controller: '\Drupal\ginvite\Controller\InvitationOperations::action'
+    _title: 'Accept/Decline invitation'
+  requirements:
+    _custom_access: '\Drupal\ginvite\Controller\InvitationOperations::checkAccess'
+  options:
+      parameters:
+        group_content:
+          type: entity:group_content
