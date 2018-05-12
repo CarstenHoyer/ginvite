@@ -1,0 +1,12 @@
+{
+    "name": "carsten/ginvite",
+    "type": "patch",
+    "authors": [
+        {
+            "name": "CarstenHoyer",
+            "email": "cahodk@gmail.com"
+        }
+    ],
+    "minimum-stability": "dev",
+    "require": {}
+}
